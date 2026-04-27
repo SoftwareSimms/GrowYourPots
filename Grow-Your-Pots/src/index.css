@@ -28,12 +28,11 @@ button,
 input,
 select {
   font: inherit;
+  border: none;
 }
 
-button,
-input,
-select {
-  border: none;
+input[type="checkbox"] {
+  accent-color: #295c3b;
 }
 
 .app-shell {
@@ -52,7 +51,8 @@ select {
 .group-card,
 .pot-card,
 .summary-card,
-.mode-card {
+.mode-card,
+.edit-rule-card {
   background: rgba(255, 255, 255, 0.88);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(23, 33, 43, 0.06);
@@ -161,7 +161,8 @@ h2 {
   font-size: 1.2rem;
 }
 
-.control-panel {
+.control-panel,
+.editor-panel {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
@@ -189,6 +190,10 @@ h2 {
   grid-template-columns: 1.15fr 1fr;
 }
 
+.salary-actions {
+  margin-top: 14px;
+}
+
 .spend-controls {
   grid-template-columns: 1.1fr 0.8fr auto auto;
 }
@@ -202,6 +207,10 @@ h2 {
   font-size: 13px;
   font-weight: 700;
   color: #60707a;
+}
+
+.field-span-2 {
+  grid-column: span 2;
 }
 
 input,
@@ -250,7 +259,7 @@ button:hover {
 
 .stat-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-top: 16px;
 }
@@ -261,6 +270,123 @@ button:hover {
   background: #f4f8f3;
   display: grid;
   gap: 6px;
+}
+
+.edit-rule-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.edit-rule-card {
+  border-radius: 18px;
+  padding: 16px;
+}
+
+.edit-rule-card strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.edit-rule-card p {
+  margin-bottom: 0;
+  color: #576873;
+}
+
+.edit-rule-card.flower {
+  background: linear-gradient(180deg, #fff7fb, rgba(255, 255, 255, 0.88));
+}
+
+.edit-rule-card.tree {
+  background: linear-gradient(180deg, #f4fbf4, rgba(255, 255, 255, 0.88));
+}
+
+.edit-rule-card.hardy {
+  background: linear-gradient(180deg, #faf9f1, rgba(255, 255, 255, 0.88));
+}
+
+.pot-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.checkbox-field {
+  align-content: end;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid #d8e2d7;
+  background: #fff;
+  color: #17212b;
+}
+
+.checkbox-row span {
+  font-size: 14px;
+  font-weight: 600;
+  color: #41535d;
+}
+
+.editor-status-row,
+.pot-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.editor-status-row {
+  margin-top: 16px;
+}
+
+.editability-badge,
+.queue-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.editability-badge.flower {
+  background: #fceaf2;
+  color: #9d4468;
+}
+
+.editability-badge.tree {
+  background: #eaf5ea;
+  color: #356944;
+}
+
+.editability-badge.hardy {
+  background: #f2f1e6;
+  color: #6d7641;
+}
+
+.queue-badge {
+  background: #fff3d5;
+  color: #9a6b00;
+}
+
+.editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.editor-hint {
+  margin: 14px 0 0;
+  color: #586873;
 }
 
 .routine-rails {
@@ -331,12 +457,12 @@ button:hover {
 
 .pot-top {
   align-items: flex-start;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .pot-title-block {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .pot-title-block strong {
@@ -347,6 +473,21 @@ button:hover {
   font-weight: 800;
   color: #294337;
   white-space: nowrap;
+}
+
+.pot-description {
+  margin-bottom: 14px;
+  color: #586873;
+}
+
+.queued-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff7de;
+  color: #8e6508;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .plant-badge {
@@ -729,6 +870,7 @@ button:hover {
 @media (max-width: 1080px) {
   .hero-card,
   .control-panel,
+  .editor-panel,
   .routine-rails,
   .group-grid {
     grid-template-columns: 1fr;
@@ -738,8 +880,13 @@ button:hover {
   .spend-controls,
   .pot-hero,
   .summary-grid,
-  .stat-strip {
+  .stat-strip,
+  .pot-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .field-span-2 {
+    grid-column: span 1;
   }
 
   .pot-hero {
@@ -758,7 +905,8 @@ button:hover {
   .group-card,
   .pot-card,
   .summary-card,
-  .mode-card {
+  .mode-card,
+  .edit-rule-card {
     border-radius: 20px;
   }
 

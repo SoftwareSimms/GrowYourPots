@@ -3,10 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 type PlantType = "flower" | "tree" | "hardy";
 type PlantState = "thriving" | "warning" | "critical";
 type SalaryMode = "drought" | "steady" | "growth";
+type PotGroup = "Survival" | "Stability" | "Living" | "Growth";
 
 type PotTemplate = {
+  id: string;
   name: string;
-  group: string;
+  description: string;
+  group: PotGroup;
   plantType: PlantType;
   baseAllocation: number;
   protectedThreshold?: number;
@@ -20,18 +23,32 @@ type Pot = PotTemplate & {
   spent: number;
 };
 
-type PersistedState = {
-  salary: number;
-  spentByPot: Record<string, number>;
+type PotDraft = {
+  name: string;
+  description: string;
+  group: PotGroup;
+  baseAllocation: number;
+  weeklyGuide: boolean;
 };
 
-const STORAGE_KEY = "grow-your-pots-greybeard-v1";
+type PersistedState = {
+  salary: number;
+  salaryDraft: number;
+  spentByPot: Record<string, number>;
+  templates: PotTemplate[];
+  pendingTreeChanges: Record<string, PotDraft>;
+};
+
+const STORAGE_KEY = "grow-your-pots-greybeard-v2";
 const BASELINE_SALARY = 3500;
 const DEFAULT_SALARY = 4000;
 
-const POT_TEMPLATES: PotTemplate[] = [
+const DEFAULT_TEMPLATES: PotTemplate[] = [
   {
+    id: "bills",
     name: "Bills",
+    description:
+      "Your non-negotiables. Rent, utilities, subscriptions, and core monthly costs that keep life running.",
     group: "Survival",
     plantType: "hardy",
     baseAllocation: 1500,
@@ -39,7 +56,10 @@ const POT_TEMPLATES: PotTemplate[] = [
     cutRank: 10,
   },
   {
+    id: "debt-min",
     name: "Debt (Min)",
+    description:
+      "The minimum debt payments you must make to stay current and avoid slipping backwards.",
     group: "Survival",
     plantType: "hardy",
     baseAllocation: 500,
@@ -47,7 +67,10 @@ const POT_TEMPLATES: PotTemplate[] = [
     cutRank: 9,
   },
   {
+    id: "emergency",
     name: "Emergency",
+    description:
+      "Your safety net. Money set aside for real surprises so one bad week does not wreck the whole system.",
     group: "Stability",
     plantType: "tree",
     baseAllocation: 150,
@@ -55,7 +78,10 @@ const POT_TEMPLATES: PotTemplate[] = [
     cutRank: 7,
   },
   {
+    id: "buffer",
     name: "Buffer",
+    description:
+      "Your shock absorber. A small flexible reserve for timing gaps, uneven months, and minor overspending.",
     group: "Stability",
     plantType: "hardy",
     baseAllocation: 150,
@@ -64,7 +90,10 @@ const POT_TEMPLATES: PotTemplate[] = [
     cutRank: 6,
   },
   {
+    id: "groceries",
     name: "Groceries",
+    description:
+      "Your everyday food pot. The budget for feeding yourself properly without raiding long-term pots.",
     group: "Living",
     plantType: "hardy",
     baseAllocation: 250,
@@ -73,7 +102,10 @@ const POT_TEMPLATES: PotTemplate[] = [
     weeklyGuide: true,
   },
   {
+    id: "eating-out",
     name: "Eating Out",
+    description:
+      "Meals, coffees, takeaways, and going out without pretending the money will magically appear later.",
     group: "Living",
     plantType: "flower",
     baseAllocation: 150,
@@ -82,7 +114,10 @@ const POT_TEMPLATES: PotTemplate[] = [
     weeklyGuide: true,
   },
   {
+    id: "fun",
     name: "Fun",
+    description:
+      "Your guilt-free enjoyment pot. Hobbies, drinks, events, treats, and the bits of life that stop it feeling like admin.",
     group: "Living",
     plantType: "flower",
     baseAllocation: 200,
@@ -91,7 +126,10 @@ const POT_TEMPLATES: PotTemplate[] = [
     weeklyGuide: true,
   },
   {
+    id: "extra-debt",
     name: "Extra Debt",
+    description:
+      "Money used to push debt down faster once essentials are covered and the foundations are stable.",
     group: "Growth",
     plantType: "tree",
     baseAllocation: 250,
@@ -99,7 +137,10 @@ const POT_TEMPLATES: PotTemplate[] = [
     cutRank: 5,
   },
   {
+    id: "savings",
     name: "Savings",
+    description:
+      "Your long-term growth pot. Money for future freedom, bigger goals, and building real financial stability.",
     group: "Growth",
     plantType: "tree",
     baseAllocation: 250,
@@ -107,7 +148,10 @@ const POT_TEMPLATES: PotTemplate[] = [
     cutRank: 4,
   },
   {
+    id: "clothing",
     name: "Clothing",
+    description:
+      "Your wardrobe pot. Clothes, shoes, replacements, and upgrades so these costs are planned instead of chaotic.",
     group: "Growth",
     plantType: "flower",
     baseAllocation: 100,
@@ -117,7 +161,8 @@ const POT_TEMPLATES: PotTemplate[] = [
   },
 ];
 
-const GROUP_ORDER = ["Survival", "Stability", "Living", "Growth"];
+const GROUP_ORDER: PotGroup[] = ["Survival", "Stability", "Living", "Growth"];
+const FLEXIBLE_GROUPS: PotGroup[] = ["Stability", "Living", "Growth"];
 
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
@@ -131,24 +176,192 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
+function cloneTemplates(templates: PotTemplate[]) {
+  return templates.map((template) => ({ ...template }));
+}
+
+function buildDraft(template: PotTemplate, pending?: PotDraft): PotDraft {
+  return {
+    name: pending?.name ?? template.name,
+    description: pending?.description ?? template.description,
+    group: pending?.group ?? template.group,
+    baseAllocation: pending?.baseAllocation ?? template.baseAllocation,
+    weeklyGuide: pending?.weeklyGuide ?? Boolean(template.weeklyGuide),
+  };
+}
+
+function normaliseDraft(draft: PotDraft, fallback: PotTemplate): PotDraft {
+  const trimmedName = draft.name.trim();
+  const trimmedDescription = draft.description.trim();
+
+  return {
+    name: trimmedName || fallback.name,
+    description: trimmedDescription || fallback.description,
+    group: FLEXIBLE_GROUPS.includes(draft.group) ? draft.group : fallback.group,
+    baseAllocation: Number.isFinite(draft.baseAllocation)
+      ? Math.max(0, roundMoney(draft.baseAllocation))
+      : fallback.baseAllocation,
+    weeklyGuide: Boolean(draft.weeklyGuide),
+  };
+}
+
+function mergeStoredTemplates(stored: unknown): PotTemplate[] {
+  if (!Array.isArray(stored)) {
+    return cloneTemplates(DEFAULT_TEMPLATES);
+  }
+
+  const storedMap = new Map<string, Partial<PotTemplate>>();
+
+  for (const entry of stored) {
+    if (
+      entry &&
+      typeof entry === "object" &&
+      "id" in entry &&
+      typeof (entry as { id: unknown }).id === "string"
+    ) {
+      storedMap.set((entry as { id: string }).id, entry as Partial<PotTemplate>);
+    }
+  }
+
+  return DEFAULT_TEMPLATES.map((template) => {
+    const candidate = storedMap.get(template.id);
+
+    if (!candidate) {
+      return { ...template };
+    }
+
+    return {
+      ...template,
+      ...candidate,
+      id: template.id,
+      plantType: template.plantType,
+      protectedThreshold: template.protectedThreshold,
+      overflowWeight: template.overflowWeight,
+      cutRank: template.cutRank,
+      group:
+        candidate.group && GROUP_ORDER.includes(candidate.group)
+          ? candidate.group
+          : template.group,
+      baseAllocation: Number.isFinite(candidate.baseAllocation)
+        ? Math.max(0, roundMoney(candidate.baseAllocation))
+        : template.baseAllocation,
+      weeklyGuide:
+        typeof candidate.weeklyGuide === "boolean"
+          ? candidate.weeklyGuide
+          : template.weeklyGuide,
+      name:
+        typeof candidate.name === "string" && candidate.name.trim()
+          ? candidate.name.trim()
+          : template.name,
+      description:
+        typeof candidate.description === "string" && candidate.description.trim()
+          ? candidate.description.trim()
+          : template.description,
+    };
+  });
+}
+
+function sanitisePendingTreeChanges(
+  pending: unknown,
+  templates: PotTemplate[]
+): Record<string, PotDraft> {
+  if (!pending || typeof pending !== "object") {
+    return {};
+  }
+
+  const treeIds = new Set(
+    templates.filter((template) => template.plantType === "tree").map((template) => template.id)
+  );
+
+  const result: Record<string, PotDraft> = {};
+
+  for (const [id, value] of Object.entries(pending as Record<string, unknown>)) {
+    if (!treeIds.has(id) || !value || typeof value !== "object") {
+      continue;
+    }
+
+    const template = templates.find((item) => item.id === id);
+    if (!template) continue;
+
+    const candidate = value as Partial<PotDraft>;
+    result[id] = normaliseDraft(
+      {
+        name: typeof candidate.name === "string" ? candidate.name : template.name,
+        description:
+          typeof candidate.description === "string"
+            ? candidate.description
+            : template.description,
+        group:
+          candidate.group && GROUP_ORDER.includes(candidate.group)
+            ? candidate.group
+            : template.group,
+        baseAllocation:
+          typeof candidate.baseAllocation === "number"
+            ? candidate.baseAllocation
+            : template.baseAllocation,
+        weeklyGuide: Boolean(candidate.weeklyGuide),
+      },
+      template
+    );
+  }
+
+  return result;
+}
+
 function getInitialState(): PersistedState {
+  const templates = cloneTemplates(DEFAULT_TEMPLATES);
+
   if (typeof window === "undefined") {
-    return { salary: DEFAULT_SALARY, spentByPot: {} };
+    return {
+      salary: DEFAULT_SALARY,
+      salaryDraft: DEFAULT_SALARY,
+      spentByPot: {},
+      templates,
+      pendingTreeChanges: {},
+    };
   }
 
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
+
     if (!raw) {
-      return { salary: DEFAULT_SALARY, spentByPot: {} };
+      return {
+        salary: DEFAULT_SALARY,
+        salaryDraft: DEFAULT_SALARY,
+        spentByPot: {},
+        templates,
+        pendingTreeChanges: {},
+      };
     }
 
-    const parsed = JSON.parse(raw) as PersistedState;
+    const parsed = JSON.parse(raw) as Partial<PersistedState>;
+    const mergedTemplates = mergeStoredTemplates(parsed.templates);
+    const salary = Number.isFinite(parsed.salary) ? Number(parsed.salary) : DEFAULT_SALARY;
+    const salaryDraft = Number.isFinite(parsed.salaryDraft)
+      ? Number(parsed.salaryDraft)
+      : salary;
+
     return {
-      salary: Number.isFinite(parsed.salary) ? parsed.salary : DEFAULT_SALARY,
-      spentByPot: parsed.spentByPot ?? {},
+      salary,
+      salaryDraft,
+      spentByPot:
+        parsed.spentByPot && typeof parsed.spentByPot === "object"
+          ? (parsed.spentByPot as Record<string, number>)
+          : {},
+      templates: mergedTemplates,
+      pendingTreeChanges: sanitisePendingTreeChanges(
+        parsed.pendingTreeChanges,
+        mergedTemplates
+      ),
     };
   } catch {
-    return { salary: DEFAULT_SALARY, spentByPot: {} };
+    return {
+      salary: DEFAULT_SALARY,
+      salaryDraft: DEFAULT_SALARY,
+      spentByPot: {},
+      templates,
+      pendingTreeChanges: {},
+    };
   }
 }
 
@@ -158,11 +371,32 @@ function getSalaryMode(salary: number): SalaryMode {
   return "steady";
 }
 
-function allocateSalary(salary: number, spentByPot: Record<string, number>): Pot[] {
-  const pots: Pot[] = POT_TEMPLATES.map((template) => ({
+function getStoredSpend(
+  spentByPot: Record<string, number>,
+  template: PotTemplate
+): number {
+  const byId = spentByPot[template.id];
+  if (Number.isFinite(byId)) {
+    return roundMoney(byId);
+  }
+
+  const legacyByName = spentByPot[template.name];
+  if (Number.isFinite(legacyByName)) {
+    return roundMoney(legacyByName);
+  }
+
+  return 0;
+}
+
+function allocateSalary(
+  templates: PotTemplate[],
+  salary: number,
+  spentByPot: Record<string, number>
+): Pot[] {
+  const pots: Pot[] = templates.map((template) => ({
     ...template,
     allocated: template.baseAllocation,
-    spent: roundMoney(spentByPot[template.name] ?? 0),
+    spent: getStoredSpend(spentByPot, template),
   }));
 
   if (salary > BASELINE_SALARY) {
@@ -191,7 +425,8 @@ function allocateSalary(salary: number, spentByPot: Record<string, number>): Pot
   const diff = roundMoney(salary - totalAllocated);
 
   if (diff !== 0) {
-    const savingsPot = pots.find((pot) => pot.name === "Savings") ?? pots[pots.length - 1];
+    const savingsPot =
+      pots.find((pot) => pot.id === "savings") ?? pots[pots.length - 1];
     savingsPot.allocated = roundMoney(savingsPot.allocated + diff);
   }
 
@@ -231,6 +466,12 @@ function getPlantLabel(plantType: PlantType) {
   if (plantType === "flower") return "Flower pot";
   if (plantType === "tree") return "Tree pot";
   return "Hardy pot";
+}
+
+function getEditabilityLabel(plantType: PlantType) {
+  if (plantType === "flower") return "Flexible now";
+  if (plantType === "tree") return "Slow change";
+  return "Protected";
 }
 
 function getModeCopy(mode: SalaryMode) {
@@ -314,36 +555,97 @@ function PlantVisual({
 
 export default function App() {
   const initialState = useMemo(() => getInitialState(), []);
+  const [templates, setTemplates] = useState<PotTemplate[]>(() =>
+    cloneTemplates(initialState.templates)
+  );
+  const [pendingTreeChanges, setPendingTreeChanges] = useState<
+    Record<string, PotDraft>
+  >(() => ({ ...initialState.pendingTreeChanges }));
   const [salary, setSalary] = useState<number>(initialState.salary);
+  const [salaryDraft, setSalaryDraft] = useState<number>(initialState.salaryDraft);
   const [pots, setPots] = useState<Pot[]>(() =>
-    allocateSalary(initialState.salary, initialState.spentByPot)
+    allocateSalary(initialState.templates, initialState.salary, initialState.spentByPot)
   );
   const [selectedPot, setSelectedPot] = useState<string>("");
   const [amount, setAmount] = useState<string>("");
 
+  const editableTemplates = useMemo(
+    () => templates.filter((template) => template.plantType !== "hardy"),
+    [templates]
+  );
+
+  const [selectedEditorPotId, setSelectedEditorPotId] = useState<string>(
+    initialState.templates.find((template) => template.plantType !== "hardy")?.id ?? ""
+  );
+
+  const selectedEditorPot = useMemo(
+    () =>
+      editableTemplates.find((template) => template.id === selectedEditorPotId) ??
+      editableTemplates[0] ??
+      null,
+    [editableTemplates, selectedEditorPotId]
+  );
+
+  const [editDraft, setEditDraft] = useState<PotDraft>(() => {
+    const firstEditable =
+      initialState.templates.find((template) => template.plantType !== "hardy") ??
+      DEFAULT_TEMPLATES.find((template) => template.plantType !== "hardy");
+
+    return firstEditable
+      ? buildDraft(firstEditable, initialState.pendingTreeChanges[firstEditable.id])
+      : {
+          name: "",
+          description: "",
+          group: "Living",
+          baseAllocation: 0,
+          weeklyGuide: false,
+        };
+  });
+
   useEffect(() => {
     setPots((previousPots) => {
       const spentByPot = Object.fromEntries(
-        previousPots.map((pot) => [pot.name, pot.spent])
+        previousPots.map((pot) => [pot.id, pot.spent])
       );
-      return allocateSalary(salary, spentByPot);
+      return allocateSalary(templates, salary, spentByPot);
     });
-  }, [salary]);
+  }, [salary, templates]);
+
+  useEffect(() => {
+    if (!editableTemplates.length) {
+      setSelectedEditorPotId("");
+      return;
+    }
+
+    if (!editableTemplates.some((template) => template.id === selectedEditorPotId)) {
+      setSelectedEditorPotId(editableTemplates[0].id);
+    }
+  }, [editableTemplates, selectedEditorPotId]);
+
+  useEffect(() => {
+    if (!selectedEditorPot) return;
+    setEditDraft(
+      buildDraft(selectedEditorPot, pendingTreeChanges[selectedEditorPot.id])
+    );
+  }, [selectedEditorPot, pendingTreeChanges]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const spentByPot = Object.fromEntries(
-      pots.map((pot) => [pot.name, roundMoney(pot.spent)])
+      pots.map((pot) => [pot.id, roundMoney(pot.spent)])
     );
 
     const snapshot: PersistedState = {
       salary,
+      salaryDraft,
       spentByPot,
+      templates,
+      pendingTreeChanges,
     };
 
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-  }, [salary, pots]);
+  }, [salary, salaryDraft, pots, templates, pendingTreeChanges]);
 
   const salaryMode = getSalaryMode(salary);
   const modeCopy = getModeCopy(salaryMode);
@@ -374,6 +676,7 @@ export default function App() {
   );
 
   const salaryDelta = roundMoney(salary - BASELINE_SALARY);
+  const queuedTreeCount = Object.keys(pendingTreeChanges).length;
 
   function handleSpend() {
     const parsedAmount = Number(amount);
@@ -384,7 +687,7 @@ export default function App() {
 
     setPots((previousPots) =>
       previousPots.map((pot) =>
-        pot.name === selectedPot
+        pot.id === selectedPot
           ? { ...pot, spent: roundMoney(pot.spent + parsedAmount) }
           : pot
       )
@@ -399,6 +702,94 @@ export default function App() {
     );
   }
 
+  function handleRunPaydayCycle() {
+    setTemplates((previousTemplates) =>
+      previousTemplates.map((template) => {
+        if (template.plantType !== "tree") return template;
+
+        const pending = pendingTreeChanges[template.id];
+        if (!pending) return template;
+
+        const nextDraft = normaliseDraft(pending, template);
+        return {
+          ...template,
+          ...nextDraft,
+          weeklyGuide: nextDraft.weeklyGuide,
+        };
+      })
+    );
+
+    setPendingTreeChanges({});
+    setSalary(Number.isFinite(salaryDraft) ? Math.max(0, roundMoney(salaryDraft)) : salary);
+  }
+
+  function handleApplyPotChange() {
+    if (!selectedEditorPot) return;
+
+    const nextDraft = normaliseDraft(editDraft, selectedEditorPot);
+
+    if (selectedEditorPot.plantType === "flower") {
+      setTemplates((previousTemplates) =>
+        previousTemplates.map((template) =>
+          template.id === selectedEditorPot.id
+            ? {
+                ...template,
+                ...nextDraft,
+                weeklyGuide: nextDraft.weeklyGuide,
+              }
+            : template
+        )
+      );
+      return;
+    }
+
+    setPendingTreeChanges((previous) => ({
+      ...previous,
+      [selectedEditorPot.id]: nextDraft,
+    }));
+  }
+
+  function handleResetEditorDraft() {
+    if (!selectedEditorPot) return;
+    setEditDraft(
+      buildDraft(selectedEditorPot, pendingTreeChanges[selectedEditorPot.id])
+    );
+  }
+
+  function handleRestoreSelectedPotDefault() {
+    if (!selectedEditorPot) return;
+
+    const defaultTemplate = DEFAULT_TEMPLATES.find(
+      (template) => template.id === selectedEditorPot.id
+    );
+
+    if (!defaultTemplate) return;
+
+    if (selectedEditorPot.plantType === "flower") {
+      setTemplates((previousTemplates) =>
+        previousTemplates.map((template) =>
+          template.id === selectedEditorPot.id ? { ...defaultTemplate } : template
+        )
+      );
+      return;
+    }
+
+    setPendingTreeChanges((previous) => ({
+      ...previous,
+      [selectedEditorPot.id]: buildDraft(defaultTemplate),
+    }));
+  }
+
+  function handleDiscardQueuedTreeChange() {
+    if (!selectedEditorPot || selectedEditorPot.plantType !== "tree") return;
+
+    setPendingTreeChanges((previous) => {
+      const next = { ...previous };
+      delete next[selectedEditorPot.id];
+      return next;
+    });
+  }
+
   return (
     <div className="app-shell">
       <div className="app">
@@ -407,9 +798,9 @@ export default function App() {
             <p className="eyebrow">ADHD money scaffolding</p>
             <h1>Grow Your Pots 🌱</h1>
             <p className="subtitle">
-              Salary is the trigger. The engine braces for a £3,500 month,
-              routes surplus automatically, and cuts flowers first when the sky
-              forgets to rain.
+              Salary is the trigger. Flowers are flexible, trees change on the
+              next payday cycle, and hardy roots stay protected so your whole
+              system does not blow over because you fancied a new plan on a Tuesday.
             </p>
           </div>
 
@@ -422,7 +813,7 @@ export default function App() {
 
             <div className="summary-grid">
               <div className="summary-card">
-                <span>Salary landed</span>
+                <span>Active salary</span>
                 <strong>{formatCurrency(salary)}</strong>
               </div>
               <div className="summary-card">
@@ -446,21 +837,23 @@ export default function App() {
             <div className="panel-heading">
               <h2>Salary autopilot</h2>
               <p>
-                Change the salary to simulate an automatic payday event. In a
-                real bank-connected version, this would run without your
-                interaction.
+                Set the next salary, then run payday. Queued tree changes also
+                take effect there, because roots and long-term plans should not
+                be reshuffled every five minutes.
               </p>
             </div>
 
             <div className="salary-controls">
               <label className="field">
-                <span>Salary received</span>
+                <span>Next payday salary</span>
                 <input
                   type="number"
                   min="0"
                   step="50"
-                  value={salary}
-                  onChange={(event) => setSalary(Number(event.target.value) || 0)}
+                  value={salaryDraft}
+                  onChange={(event) =>
+                    setSalaryDraft(Number(event.target.value) || 0)
+                  }
                 />
               </label>
 
@@ -470,12 +863,18 @@ export default function App() {
                     key={preset}
                     type="button"
                     className="ghost-button"
-                    onClick={() => setSalary(preset)}
+                    onClick={() => setSalaryDraft(preset)}
                   >
                     {formatCurrency(preset)}
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div className="salary-actions">
+              <button type="button" onClick={handleRunPaydayCycle}>
+                Run payday cycle
+              </button>
             </div>
 
             <div className="stat-strip">
@@ -494,6 +893,10 @@ export default function App() {
                 <span>Protected roots</span>
                 <strong>{formatCurrency(totals.protectedRoots)}</strong>
               </div>
+              <div className="mini-stat">
+                <span>Queued tree changes</span>
+                <strong>{queuedTreeCount}</strong>
+              </div>
             </div>
           </div>
 
@@ -502,7 +905,7 @@ export default function App() {
               <h2>Log spending</h2>
               <p>
                 Spend reduces the health of a single pot. The rest of the garden
-                stays locked unless salary changes.
+                stays locked unless payday runs or you deliberately reshape a flower.
               </p>
             </div>
 
@@ -513,7 +916,7 @@ export default function App() {
               >
                 <option value="">Select pot</option>
                 {pots.map((pot) => (
-                  <option key={pot.name} value={pot.name}>
+                  <option key={pot.id} value={pot.id}>
                     {pot.name}
                   </option>
                 ))}
@@ -531,10 +934,225 @@ export default function App() {
               <button type="button" onClick={handleSpend}>
                 Log spend
               </button>
-              <button type="button" className="ghost-button" onClick={handleResetSpends}>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleResetSpends}
+              >
                 Reset cycle
               </button>
             </div>
+          </div>
+        </section>
+
+        <section className="editor-panel">
+          <div className="panel-block">
+            <div className="panel-heading">
+              <h2>Pot shaping rules</h2>
+              <p>
+                This is the part where the design finally behaves like a real
+                nervous system instead of a cheerful spreadsheet.
+              </p>
+            </div>
+
+            <div className="edit-rule-list">
+              <div className="edit-rule-card flower">
+                <strong>Flowers change now</strong>
+                <p>
+                  Rename them, resize them, repurpose them. They are for flexible
+                  wants, experiments, and whatever is relevant this month.
+                </p>
+              </div>
+
+              <div className="edit-rule-card tree">
+                <strong>Trees change on payday</strong>
+                <p>
+                  You can queue edits today, but they only take effect on the
+                  next payday cycle. Long-term plans should feel rooted.
+                </p>
+              </div>
+
+              <div className="edit-rule-card hardy">
+                <strong>Hardy pots stay protected</strong>
+                <p>
+                  These are the roots. Bills, groceries, and buffers do not get
+                  casually reclassified because your mood invented a new category.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel-block">
+            <div className="panel-heading">
+              <h2>Pot shaping</h2>
+              <p>
+                Edit any non-hardy pot. Flowers apply immediately. Trees queue
+                for the next payday cycle.
+              </p>
+            </div>
+
+            {selectedEditorPot ? (
+              <>
+                <div className="pot-editor-grid">
+                  <label className="field field-span-2">
+                    <span>Editable pot</span>
+                    <select
+                      value={selectedEditorPot.id}
+                      onChange={(event) => setSelectedEditorPotId(event.target.value)}
+                    >
+                      {editableTemplates.map((template) => {
+                        const hasQueue =
+                          template.plantType === "tree" &&
+                          Boolean(pendingTreeChanges[template.id]);
+
+                        return (
+                          <option key={template.id} value={template.id}>
+                            {template.name}
+                            {hasQueue ? " (queued)" : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>Name</span>
+                    <input
+                      type="text"
+                      value={editDraft.name}
+                      onChange={(event) =>
+                        setEditDraft((previous) => ({
+                          ...previous,
+                          name: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Base allocation</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="10"
+                      value={editDraft.baseAllocation}
+                      onChange={(event) =>
+                        setEditDraft((previous) => ({
+                          ...previous,
+                          baseAllocation: Number(event.target.value) || 0,
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label className="field field-span-2">
+                    <span>Description</span>
+                    <input
+                      type="text"
+                      value={editDraft.description}
+                      onChange={(event) =>
+                        setEditDraft((previous) => ({
+                          ...previous,
+                          description: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Group</span>
+                    <select
+                      value={editDraft.group}
+                      onChange={(event) =>
+                        setEditDraft((previous) => ({
+                          ...previous,
+                          group: event.target.value as PotGroup,
+                        }))
+                      }
+                    >
+                      {FLEXIBLE_GROUPS.map((group) => (
+                        <option key={group} value={group}>
+                          {group}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="field checkbox-field">
+                    <span>Weekly guide</span>
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={editDraft.weeklyGuide}
+                        onChange={(event) =>
+                          setEditDraft((previous) => ({
+                            ...previous,
+                            weeklyGuide: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span>Show weekly pacing for this pot</span>
+                    </label>
+                  </label>
+                </div>
+
+                <div className="editor-status-row">
+                  <span className={`plant-badge ${selectedEditorPot.plantType}`}>
+                    {getPlantLabel(selectedEditorPot.plantType)}
+                  </span>
+                  <span className={`editability-badge ${selectedEditorPot.plantType}`}>
+                    {getEditabilityLabel(selectedEditorPot.plantType)}
+                  </span>
+                  {selectedEditorPot.plantType === "tree" &&
+                    pendingTreeChanges[selectedEditorPot.id] && (
+                      <span className="queue-badge">Queued for payday</span>
+                    )}
+                </div>
+
+                <div className="editor-actions">
+                  <button type="button" onClick={handleApplyPotChange}>
+                    {selectedEditorPot.plantType === "flower"
+                      ? "Apply flower change now"
+                      : "Queue tree change"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={handleResetEditorDraft}
+                  >
+                    Reset draft
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={handleRestoreSelectedPotDefault}
+                  >
+                    Restore default
+                  </button>
+
+                  {selectedEditorPot.plantType === "tree" &&
+                    pendingTreeChanges[selectedEditorPot.id] && (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={handleDiscardQueuedTreeChange}
+                      >
+                        Discard queued change
+                      </button>
+                    )}
+                </div>
+
+                <p className="editor-hint">
+                  {selectedEditorPot.plantType === "flower"
+                    ? "Flower edits take effect immediately. Flexible pots are allowed to flex."
+                    : "Tree edits wait for the next payday cycle. That delay is the point, not a bug."}
+                </p>
+              </>
+            ) : (
+              <p className="editor-hint">No editable pots available.</p>
+            )}
           </div>
         </section>
 
@@ -577,18 +1195,33 @@ export default function App() {
                   const weeklyGuide = getWeeklyGuide(pot);
                   const remainingPercent = getRemainingPercent(pot);
                   const overdrawn = remaining < 0;
+                  const hasQueuedTreeChange =
+                    pot.plantType === "tree" && Boolean(pendingTreeChanges[pot.id]);
 
                   return (
-                    <article key={pot.name} className="pot-card">
+                    <article key={pot.id} className="pot-card">
                       <div className="pot-top">
                         <div className="pot-title-block">
                           <strong>{pot.name}</strong>
-                          <span className={`plant-badge ${pot.plantType}`}>
-                            {getPlantLabel(pot.plantType)}
-                          </span>
+                          <div className="pot-badge-row">
+                            <span className={`plant-badge ${pot.plantType}`}>
+                              {getPlantLabel(pot.plantType)}
+                            </span>
+                            <span className={`editability-badge ${pot.plantType}`}>
+                              {getEditabilityLabel(pot.plantType)}
+                            </span>
+                          </div>
                         </div>
                         <span className="pot-amount">{formatCurrency(pot.allocated)}</span>
                       </div>
+
+                      <p className="pot-description">{pot.description}</p>
+
+                      {hasQueuedTreeChange && (
+                        <p className="queued-note">
+                          A tree edit is queued and will apply on the next payday cycle.
+                        </p>
+                      )}
 
                       <div className="pot-hero">
                         <PlantVisual plantType={pot.plantType} state={state} />
